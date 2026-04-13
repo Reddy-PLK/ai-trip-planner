@@ -1,23 +1,30 @@
 // app/api/generate-itinerary/route.js
 
-import Anthropic from "@anthropic-ai/sdk";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 import { NextResponse } from "next/server";
 
-const anthropic = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY,
-});
+// Initialize Gemini client with our API key
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 export async function POST(request) {
   try {
+    // 1. Read form data sent from the frontend
     const body = await request.json();
     const { destination, days, budget, interests } = body;
 
+    // 2. Validate required fields
     if (!destination || !days || !budget) {
       return NextResponse.json(
-        { error: "Missing required fields." },
+        { error: "Missing required fields: destination, days, or budget" },
         { status: 400 }
       );
     }
+
+    // 3. Build the prompt
+    const interestText =
+      interests && interests.length > 0
+        ? `The traveler's interests include: ${interests.join(", ")}.`
+        : "The traveler has general interests.";
 
     const budgetDescriptions = {
       budget: "a tight budget (under $50/day)",
@@ -25,58 +32,42 @@ export async function POST(request) {
       luxury: "a luxury budget ($150+/day)",
     };
 
-    const interestText =
-      interests && interests.length > 0
-        ? interests.join(", ")
-        : "general sightseeing";
+    const prompt = `You are an expert travel planner with deep knowledge of destinations worldwide.
 
-    const prompt = `You are an expert travel planner.
+Create a detailed, day-by-day travel itinerary for the following trip:
 
-Create a detailed day-by-day itinerary for:
-- Destination: ${destination}
-- Duration: ${days} days
-- Budget: ${budgetDescriptions[budget] || budget}
-- Interests: ${interestText}
+- **Destination:** ${destination}
+- **Duration:** ${days} days
+- **Budget:** ${budgetDescriptions[budget] || budget}
+- **Interests:** ${interestText}
 
-Format your response exactly like this:
+Please structure the itinerary as follows:
+- Start with a short "Trip Overview" (2-3 sentences about what makes this destination special for this traveler)
+- Then list each day clearly: "Day 1: [Theme for the day]"
+- For each day, include:
+  - Morning activity (with specific place names)
+  - Afternoon activity
+  - Evening activity or dinner recommendation
+  - A budget tip relevant to the day's activities
+- End with "Practical Tips" section (3-5 bullet points about transportation, best times to visit spots, cultural notes, etc.)
 
-Trip Overview
-[2-3 sentences about the destination]
+Make it specific, practical, and exciting. Use real place names, local restaurants, and hidden gems — not just tourist clichés. Tailor everything to the budget level.`;
 
-Day 1: [Theme]
-- Morning: [activity + place name]
-- Afternoon: [activity + place name]
-- Evening: [activity or dinner recommendation]
-- Budget Tip: [money-saving advice]
+    // 4. Call Gemini API
+    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+    // "gemini-1.5-flash" is fast, free, and great for this use case
 
-[Continue for all ${days} days]
+    const result = await model.generateContent(prompt);
+    const response = await result.response;
+    const itinerary = response.text();
 
-Practical Tips
-- [tip 1]
-- [tip 2]
-- [tip 3]`;
-
-    console.log("Calling Claude API..."); // This will show in your terminal
-
-    const message = await anthropic.messages.create({
-      model: "claude-sonnet-4-20250514",
-      max_tokens: 2000,
-      messages: [{ role: "user", content: prompt }],
-    });
-
-    console.log("Claude responded successfully"); // Confirm it worked
-
-    const itinerary = message.content[0].text;
-
+    // 5. Send itinerary back to frontend
     return NextResponse.json({ itinerary });
 
   } catch (error) {
-    // This logs the REAL error to your terminal
-    console.error("FULL ERROR:", error.message);
-    console.error("ERROR TYPE:", error.constructor.name);
-
+    console.error("Error generating itinerary:", error);
     return NextResponse.json(
-      { error: error.message || "Failed to generate itinerary." },
+      { error: "Failed to generate itinerary. Please try again." },
       { status: 500 }
     );
   }
